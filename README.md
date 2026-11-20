@@ -2,33 +2,42 @@
 
 This project follows a simple feedback loop. An STM32 reads a voltage, compares it with a setpoint, and updates a PWM output. I used an RC circuit as the load so the entire loop can be tested on a desk with a Nucleo board, two resistors, and a capacitor.
 
-The firmware targets the **NUCLEO-F401RE** and uses the STM32 peripheral registers through CMSIS. FreeRTOS handles task scheduling. A Python/pytest bench test drives the board over USB and saves the raw data so the timing and response can be checked later.
+The firmware targets the **NUCLEO-F767ZI** and uses the STM32 peripheral registers through CMSIS. FreeRTOS handles task scheduling. A Python/pytest bench test drives the board over USB and saves the raw data so the timing and response can be checked later.
 
 ## How it works
 
-1. A high-priority FreeRTOS task wakes every 10 ms and starts an ADC1 conversion on PA0. The ADC interrupt sends the reading back to that task using a direct task notification.
+1. A high-priority FreeRTOS task wakes every 10 ms and starts an ADC1 channel 3 conversion on PA3. The ADC interrupt sends the reading back to that task using a direct task notification.
 2. The PID controller smooths the measurement with a first-order low-pass filter, then compares it with the setpoint. The derivative uses the measured value to avoid a kick at a setpoint change. The output is limited to 0–100% and the integral pauses when it would push the output farther into a limit.
 3. TIM3 generates 2 kHz PWM on PA6. A compare-register update takes effect on the next PWM cycle. TIM2 runs at 1 MHz and provides timestamps for the controller and test harness.
-4. A one-slot FreeRTOS queue sends the latest reading to a lower-priority USART2 telemetry task. This keeps a slow serial write out of the control loop. A jump in the sequence number shows when the host missed a frame.
+4. A one-slot FreeRTOS queue sends the latest reading to a lower-priority USART3 telemetry task. This keeps a slow serial write out of the control loop. A jump in the sequence number shows when the host missed a frame.
 5. A conversion timeout or a control period outside 5–15 ms latches a fault. Twenty consecutive high-rail readings also trip the controller. Low-rail readings count toward a fault while the previous PWM command is at least 10%, so a discharged capacitor at idle is allowed. A fault sets duty to zero until the board resets.
 
 ## Wiring the bench
 
-Use the Nucleo's ST-LINK USB port for power, flashing, and the virtual serial port. Wire the RC load with the board powered off. The output is for the RC test load. A real motor or other power actuator would need an external driver and its own tuning.
+Use the Nucleo's ST-LINK USB connector (CN1) for power, flashing, and the virtual serial port. On this board, the ST-LINK serial connection uses the factory routing to USART3 (PD8 TX and PD9 RX). Wire the RC load with the board powered off. The output is for the RC test load. A real motor or other power actuator would need an external driver and its own tuning.
 
 ```text
-PA6 (D12, PWM) ── 10 kΩ ──●── 1 kΩ ──●── PA0 (A0, ADC)
+PA6 (D12, PWM) ── 10 kΩ ──●── 1 kΩ ──●── PA3 (A0, ADC)
                           │           │
-                        47 µF         └── PB0 (A3, HIL clamp)
+                        47 µF         └── PF3 (A3, HIL clamp)
                           │
                          GND
 ```
 
-Connect the capacitor's negative lead to GND if it is polarized. The time constant is about 0.47 s, so the ADC sees the average PWM voltage change gradually. PB0 releases the ADC node normally. In the HIL build, a serial command pulls PB0 low through its open-drain output to simulate a sensor wire shorted to ground. The 1 kΩ resistor limits the capacitor discharge current during this test.
+| Signal | Nucleo header |
+| --- | --- |
+| PA6, PWM output | D12, CN7 pin 12 |
+| PA3, ADC input | A0, CN9 pin 1 |
+| PF3, HIL clamp | A3, CN9 pin 7 |
+| GND | CN7 pin 8 |
+
+See the [ST Nucleo-144 board manual (UM1974)](https://www.st.com/resource/en/user_manual/um1974-stm32-nucleo144-boards-mb1137-stmicroelectronics.pdf) for the connector drawings, the F767ZI pin table, and the ST-LINK serial routing.
+
+Connect the capacitor's negative lead to GND if it is polarized. The time constant is about 0.47 s, so the ADC sees the average PWM voltage change gradually. PF3 releases the ADC node normally. In the HIL build, a serial command pulls PF3 low through its open-drain output to simulate a sensor wire shorted to ground. The 1 kΩ resistor limits the capacitor discharge current during this test.
 
 ## Build and flash
 
-Install Git, GNU Make, the Arm GNU Toolchain for `arm-none-eabi` including newlib, and `st-flash` from the ST-LINK tools. The build uses the 16 MHz internal reset clock and fetches the pinned FreeRTOS Kernel and CMSIS releases.
+Install Git, GNU Make, the Arm GNU Toolchain for `arm-none-eabi` including newlib, and `st-flash` from the ST-LINK tools. The build uses the Cortex-M7 FreeRTOS port and the F767ZI startup and linker configuration. It runs from the 16 MHz internal reset clock so the 10 ms loop, 2 kHz PWM, and 115200 baud UART all use the same clock assumptions.
 
 ```sh
 make deps
@@ -36,7 +45,7 @@ make HIL=1
 make HIL=1 flash
 ```
 
-Use `make` and `make flash` for the normal build with the fault injector and serial reset command disabled. You can also flash the generated binary at `0x08000000` with STM32CubeProgrammer or debug the ELF through ST-LINK. The board powers up at zero duty with a zero setpoint.
+Use `make` and `make flash` for the normal build with the fault injector and serial reset command disabled. You can also flash the generated binary from `build/f767zi/hil-1/` (or `build/f767zi/hil-0/` for the normal build) at `0x08000000` with STM32CubeProgrammer or debug the ELF through ST-LINK. The board powers up at zero duty with a zero setpoint.
 
 Open the virtual serial port at **115200 baud, 8N1**. Send one ASCII command at a time without a line ending. The firmware checks one byte per control cycle.
 

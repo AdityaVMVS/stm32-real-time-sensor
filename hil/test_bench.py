@@ -1,4 +1,4 @@
-"""Run against a flashed NUCLEO-F401RE with the README wiring."""
+"""Run against a flashed NUCLEO-F767ZI with the README wiring."""
 
 from contextlib import suppress
 import csv

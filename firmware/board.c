@@ -1,5 +1,5 @@
 #include "board.h"
-#include "stm32f4xx.h"
+#include "stm32f7xx.h"
 
 void SystemInit(void)
 {
@@ -25,8 +25,13 @@ static void alternate(GPIO_TypeDef *port, unsigned pin, unsigned af)
 
 void board_init(void)
 {
-    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN;
-    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN | RCC_APB1ENR_TIM3EN | RCC_APB1ENR_USART2EN;
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIODEN;
+#if HIL
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOFEN;
+#endif
+    (void)RCC->AHB1ENR;
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN | RCC_APB1ENR_TIM3EN | RCC_APB1ENR_USART3EN;
+    (void)RCC->APB1ENR;
     RCC->APB2ENR |= RCC_APB2ENR_ADC1EN;
     (void)RCC->APB2ENR;
 
@@ -46,25 +51,28 @@ void board_init(void)
     TIM3->CR1 = TIM_CR1_ARPE | TIM_CR1_CEN;
     alternate(GPIOA, 6, 2);
 
-    /* USART2 on PA2/PA3 (ST-LINK virtual COM port), 115200 8N1. */
-    alternate(GPIOA, 2, 7);
-    alternate(GPIOA, 3, 7);
-    USART2->BRR = (16000000U + 57600U) / 115200U;
-    USART2->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
+    /* USART3 on PD8/PD9 (ST-LINK virtual COM port), 115200 8N1. */
+    alternate(GPIOD, 8, 7);
+    alternate(GPIOD, 9, 7);
+    USART3->BRR = (16000000U + 57600U) / 115200U;
+    USART3->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
 
-    /* PA0 (A0), ADC1 channel 0. Long sample time for the RC fixture. */
-    GPIOA->MODER |= 3UL;
-    ADC1->SMPR2 = 6UL << ADC_SMPR2_SMP0_Pos;
+    /* PA3 (A0), ADC1 channel 3. Long sample time for the RC fixture. */
+    GPIOA->PUPDR &= ~(3UL << (2U * 3U));
+    GPIOA->MODER |= 3UL << (2U * 3U);
+    ADC1->SQR3 = 3UL << ADC_SQR3_SQ1_Pos;
+    ADC1->SMPR2 = 6UL << ADC_SMPR2_SMP3_Pos;
     ADC1->CR1 = ADC_CR1_EOCIE;
     ADC1->CR2 = ADC_CR2_ADON;
     NVIC_SetPriority(ADC_IRQn, 6);
     NVIC_EnableIRQ(ADC_IRQn);
 
 #if HIL
-    /* PB0 (A3) releases the ADC node when its open-drain output is high. */
-    GPIOB->BSRR = 1UL;
-    GPIOB->OTYPER |= 1UL;
-    GPIOB->MODER = (GPIOB->MODER & ~3UL) | 1UL;
+    /* PF3 (A3) releases the ADC node when its open-drain output is high. */
+    GPIOF->BSRR = 1UL << 3;
+    GPIOF->OTYPER |= 1UL << 3;
+    GPIOF->PUPDR &= ~(3UL << (2U * 3U));
+    GPIOF->MODER = (GPIOF->MODER & ~(3UL << (2U * 3U))) | (1UL << (2U * 3U));
 #endif
 }
 
@@ -90,25 +98,29 @@ uint16_t adc_result(void)
 
 int uart_read(void)
 {
-    if (!(USART2->SR & USART_SR_RXNE)) {
+    uint32_t status = USART3->ISR;
+    if (status & USART_ISR_ORE) {
+        USART3->ICR = USART_ICR_ORECF;
+    }
+    if (!(status & USART_ISR_RXNE)) {
         return -1;
     }
-    return (int)(USART2->DR & 0xffU);
+    return (int)(USART3->RDR & 0xffU);
 }
 
 void uart_write(const char *line)
 {
     while (*line) {
-        while (!(USART2->SR & USART_SR_TXE)) {
+        while (!(USART3->ISR & USART_ISR_TXE)) {
         }
-        USART2->DR = (uint8_t)*line++;
+        USART3->TDR = (uint8_t)*line++;
     }
 }
 
 void fixture_clamp(bool active)
 {
 #if HIL
-    GPIOB->BSRR = active ? (1UL << 16) : 1UL;
+    GPIOF->BSRR = active ? (1UL << (16U + 3U)) : (1UL << 3);
 #else
     (void)active;
 #endif

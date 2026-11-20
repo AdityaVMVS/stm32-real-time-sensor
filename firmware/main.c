@@ -4,7 +4,7 @@
 #include "FreeRTOS.h"
 #include "queue.h"
 #include "task.h"
-#include "stm32f4xx.h"
+#include "stm32f7xx.h"
 
 #include "board.h"
 #include "pid.h"

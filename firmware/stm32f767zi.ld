@@ -1,8 +1,9 @@
 ENTRY(Reset_Handler)
 MEMORY
 {
-    FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 512K
-    RAM   (rwx) : ORIGIN = 0x20000000, LENGTH = 96K
+    FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 2048K
+    /* The first 128 KiB of SRAM is data tightly coupled memory. */
+    RAM   (rwx) : ORIGIN = 0x20000000, LENGTH = 128K
 }
 _estack = ORIGIN(RAM) + LENGTH(RAM);
 SECTIONS
